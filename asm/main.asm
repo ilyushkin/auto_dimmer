@@ -13,6 +13,15 @@
 .equ TRIAC_DELAY_TOP = 199          ; Maximum delay before sending a pulse to the TRIAC (minimum brightness)
 .equ TRIAC_DELAY_DIMOUT_TOP = 209   ; Maximum delay for auto power off (for greater smoothness)
 
+; ADC scaling: ADCH>>2 (0..63, two lsr) * 3 + TRIAC_DELAY_BTM must equal TRIAC_DELAY_TOP and fit in 8 bits
+; 63 = 255>>2 (lsr count in read_pot_value), 3 = loop multiplier (subi tmpb, -3); update both below if either changes
+.if (63 * 3 + TRIAC_DELAY_BTM) > 255
+    .error "ADC scaling overflows 8 bits"
+.endif
+.if (63 * 3 + TRIAC_DELAY_BTM) != TRIAC_DELAY_TOP
+    .error "ADC scaling result must equal TRIAC_DELAY_TOP"
+.endif
+
 .equ BTN_DELAY = 200                ; Number of PCI0 interrupts triggered to detect long button press
 
 .equ LAMP_STATUS_BIT = 0            ; The bit number encoding the lamp status in the status_register: off (0), on (1)
@@ -384,6 +393,8 @@ multiplication_loop:
     rjmp multiplication_loop
 exit_multiplication_loop:
     ; Add TRIAC_DELAY_BTM to the resulting value
+    ; Invariant: tmpb max = 63*3 + TRIAC_DELAY_BTM = 199 = TRIAC_DELAY_TOP, no 8-bit overflow
+    ; 63 = 255>>2 (lsr count), 3 = loop multiplier (subi tmpb, -3): enforced by compile-time checks at the top of this file
     subi tmpb, -TRIAC_DELAY_BTM                                   ; To shift the raw value from the potentiometer by 10 units, adding 10 to it
     mov triac_delay, tmpb
 
