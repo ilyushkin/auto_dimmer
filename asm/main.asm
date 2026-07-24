@@ -226,7 +226,7 @@ reti
 ; ========== ADC Conversion End Interrupt Handler
 ADCC_handler:
     ; No SREG save: sbr affects N/V/Z/S only, next ADCC fires approx. 10 ms after this one, multiplication_loop completes in <350 us
-    sbr status_register, 1<<RECOMPUTE_DELAY     
+    sbr status_register, 1<<RECOMPUTE_DELAY
 reti
 
 
@@ -327,17 +327,23 @@ process_long_press:
     ldi tmpa, TRIAC_DELAY_DIMOUT_TOP + 1
     sub tmpa, triac_delay                       ; Subtract from TRIAC_DELAY_DIMOUT_TOP + 1, the current value of triac_delay,
                                                 ; since we are interested in 200 effective number of dimming gradations used: 10..209 inclusive
-    mov tmpc, tmpa
+    mov tmpc, tmpa                              ; tmpc = number of auto-dimout steps remaining (TRIAC_DELAY_DIMOUT_TOP+1 - triac_delay, range 11..200)
     ldi tmpa, LOW(POWEROFF_DELAY_SECONDS)
     ldi tmpb, HIGH(POWEROFF_DELAY_SECONDS)
 subtraction_loop:
-    adiw seconds_per_division1:seconds_per_division0, 1  ; Increase the value of the register pair seconds_per_division1:seconds_per_division0 by 1
-    sub tmpa, tmpc                              ; Subtract tmpc from tmpa
-    sbci tmpb, 0                                ; Subtract the carry flag from the previous subtraction
-    brcc subtraction_loop                       ; If the carry flag is cleared, continue the loop
-    sbiw seconds_per_division1:seconds_per_division0, 1  ; Subtract the extra one, because we need to round the integer division down
-    mov poff_counter0, seconds_per_division0    ; Load the new calculated values ​​into the counter of seconds elapsed since the previous dimming
+    adiw seconds_per_division1:seconds_per_division0, 1  ; Increment quotient candidate
+    sub tmpa, tmpc                              ; Subtract tmpc from low byte
+    sbci tmpb, 0                                ; Propagate borrow into high byte
+    brcc subtraction_loop                       ; Repeat while no borrow
+    sbiw seconds_per_division1:seconds_per_division0, 1  ; Undo last increment: q = floor(POWEROFF_DELAY_SECONDS / tmpc)
+    ; At loop exit tmpa = r - tmpc wrapped in 8 bits; add tmpc to recover r = POWEROFF_DELAY_SECONDS mod tmpc
+    ; First interval is q+r, all subsequent are q; total = (q+r) + (tmpc-1)*q = POWEROFF_DELAY_SECONDS
+    add tmpa, tmpc                              ; Recover r = POWEROFF_DELAY_SECONDS mod tmpc
+    mov poff_counter0, seconds_per_division0    ; Load q into the poff_counter pair
     mov poff_counter1, seconds_per_division1
+    add poff_counter0, tmpa                     ; First interval = q + r
+    clr tmpa                                    ; CLR preserves carry
+    adc poff_counter1, tmpa                     ; Propagate carry into high byte
     sei                                         ; Turn interrupts back on
     rjmp calc_triac_delay
 
