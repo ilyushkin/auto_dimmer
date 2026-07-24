@@ -11,7 +11,7 @@
 
 .equ TRIAC_DELAY_BTM = 10           ; Minimum delay before sending a pulse to the TRIAC (maximum brightness)
 .equ TRIAC_DELAY_TOP = 199          ; Maximum delay before sending a pulse to the TRIAC (minimum brightness)
-.equ TRIAC_DELAY_DIMOUT_TOP = 209   ; Maximum delay before auto power off
+.equ TRIAC_DELAY_DIMOUT_TOP = 219   ; Maximum delay before auto power off
 .equ TRIAC_LUT_POT_SIZE = 128       ; ADC range after ADCH>>1: indices 0..127
 .equ TRIAC_LUT_SIZE = 148           ; Full LUT: 128 pot entries + 20 dimout-only entries
 
@@ -436,12 +436,13 @@ dimout_interval_ready:
 
 
 ; ========== Gamma-corrected LUT
-; Indices 0..127 preserve the gamma-corrected potentiometer mapping (delay 10..199).
-; Indices 128..147 are dimout-only: each low-end delay 200..209 is repeated twice
-; to spend more time in the low-brightness region while keeping LUT-only control.
+; Indices 0..127 are used by the potentiometer and end at delay 199.
+; Indices 128..147 are dimout-only and contain delays 200..219.
+
 ; For the actual interrupt sequence:
 ; alpha=(triac_delay+1)*pi/250
 ; P=((pi-alpha)+sin(2*alpha)/2)/pi
+; where alpha is the TRIAC firing angle in radians
 triac_lut:
     .db  10,  31,  39,  45,  50,  54,  58,  61
     .db  64,  67,  69,  72,  74,  76,  79,  81
@@ -452,13 +453,15 @@ triac_lut:
     .db 126, 128, 129, 130, 131, 132, 133, 134
     .db 135, 136, 137, 138, 139, 140, 141, 142
     .db 143, 144, 145, 146, 147, 148, 149, 149
-    .db 150, 151, 152, 153, 154, 155, 156, 157
-    .db 158, 159, 160, 160, 161, 162, 163, 164
-    .db 165, 166, 167, 168, 168, 169, 170, 171
-    .db 172, 173, 174, 175, 175, 176, 177, 178
-    .db 179, 180, 181, 181, 182, 183, 184, 185
-    .db 186, 187, 188, 188, 189, 190, 191, 192
-    .db 193, 194, 195, 195, 196, 197, 198, 199
-    .db 200, 200, 201, 201, 202, 202, 203, 203
-    .db 204, 204, 205, 205, 206, 206, 207, 207
-    .db 208, 208, 209, 209
+    .db 149, 150, 151, 152, 153, 154, 155, 156
+    .db 157, 158, 159, 160, 160, 161, 162, 163
+    .db 164, 165, 166, 167, 168, 168, 169, 170
+    .db 171, 172, 173, 174, 175, 175, 176, 177
+    .db 178, 179, 180, 181, 181, 182, 183, 184
+    .db 185, 186, 187, 188, 188, 189, 190, 191
+    .db 192, 193, 194, 195, 196, 197, 198, 199
+
+    ; Dim-out-only entries
+    .db 200, 201, 202, 203, 204, 205, 206, 207
+    .db 208, 209, 210, 211, 212, 213, 214, 215
+    .db 216, 217, 218, TRIAC_DELAY_DIMOUT_TOP
