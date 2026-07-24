@@ -22,7 +22,7 @@
     .error "ADC scaling result must equal TRIAC_DELAY_TOP"
 .endif
 
-.equ BTN_DELAY = 200                ; Number of PCI0 interrupts triggered to detect long button press
+.equ BTN_DELAY = 100                ; Number of PCI0 interrupts triggered to detect long button press
 
 .equ LAMP_STATUS_BIT = 0            ; The bit number encoding the lamp status in the status_register: off (0), on (1)
 .equ SHORT_PRESS_BIT = 1            ; The bit number encoding detection of short button press
