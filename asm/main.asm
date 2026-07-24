@@ -256,6 +256,12 @@ RESET:
     ldi tmpa, 1<<ADTS2 | 1<<ADTS1           ; ADC Auto Trigger Source: Pin Change Interrupt Request
     out ADCSRB, tmpa
 
+    ; ========== Watchdog
+    ldi tmpa, 1<<WDCE | 1<<WDE              ; Step 1: enable timed change sequence (WDCE+WDE must be set together)
+    out WDTCR, tmpa
+    ldi tmpa, 1<<WDE | 1<<WDP2 | 1<<WDP1    ; Step 2 (within 4 cycles): set WDE + prescaler=8 -> approx. 1 s timeout (WDP2:WDP1:WDP0 = 110)
+    out WDTCR, tmpa
+
     ; ========== Initial pins states
     cbi PORTB, TRIAC                        ; Set a logical zero on the TRIAC output, thereby disabling it when the MCU starts up
 
@@ -264,6 +270,7 @@ RESET:
 
 ; ========== Main loop
 MAIN:
+    wdr                                         ; Reset watchdog timer
     sbrs status_register, LAMP_STATUS_BIT       ; Processing the state of the LAMP_STATUS_BIT bit
     rjmp lamp_off
     sbi PORTB, LED                              ; Turn on the LED if the LAMP_STATUS_BIT bit == 1
