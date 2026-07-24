@@ -11,15 +11,18 @@
 
 .equ TRIAC_DELAY_BTM = 10           ; Minimum delay before sending a pulse to the TRIAC (maximum brightness)
 .equ TRIAC_DELAY_TOP = 199          ; Maximum delay before sending a pulse to the TRIAC (minimum brightness)
-.equ TRIAC_DELAY_DIMOUT_TOP = 209   ; Maximum delay for auto power off (for greater smoothness)
+.equ TRIAC_DELAY_DIMOUT_TOP = 209   ; Maximum delay before auto power off
+.equ TRIAC_LUT_POT_SIZE = 128       ; ADC range after ADCH>>1: indices 0..127
+.equ TRIAC_LUT_SIZE = 148           ; Full LUT: 128 pot entries + 20 dimout-only entries
 
-; ADC scaling: ADCH>>2 (0..63, two lsr) * 3 + TRIAC_DELAY_BTM must equal TRIAC_DELAY_TOP and fit in 8 bits
-; 63 = 255>>2 (lsr count in read_pot_value), 3 = loop multiplier (subi tmpb, -3); update both below if either changes
-.if (63 * 3 + TRIAC_DELAY_BTM) > 255
-    .error "ADC scaling overflows 8 bits"
+.if TRIAC_LUT_SIZE > 255
+    .error "TRIAC_LUT_SIZE must fit in an 8-bit index"
 .endif
-.if (63 * 3 + TRIAC_DELAY_BTM) != TRIAC_DELAY_TOP
-    .error "ADC scaling result must equal TRIAC_DELAY_TOP"
+.if POWEROFF_DELAY_SECONDS < TRIAC_LUT_SIZE
+    .error "POWEROFF_DELAY_SECONDS must be at least TRIAC_LUT_SIZE so every LUT level lasts at least one second"
+.endif
+.if POWEROFF_DELAY_SECONDS > 65535
+    .error "POWEROFF_DELAY_SECONDS must fit in 16 bits"
 .endif
 
 .equ BTN_DELAY = 100                ; Number of PCI0 interrupts triggered to detect long button press
@@ -31,6 +34,10 @@
 .equ RECOMPUTE_DELAY = 4            ; The bit number indicating that the delay value needs to be recalculated
 
 ; ========== Register aliases
+.def dimout_steps = r10             ; Number of timed LUT levels remaining
+.def dimout_remainder = r11         ; POWEROFF_DELAY_SECONDS mod dimout_steps
+.def dimout_error = r12             ; Error accumulator for distributing remainder seconds
+.def dimout_lut_idx = r13           ; Current LUT index: pot reading uses 0..127, dimout uses 0..147
 .def poff_counter0 = r14
 .def poff_counter1 = r15
 
@@ -225,7 +232,8 @@ reti
 
 ; ========== ADC Conversion End Interrupt Handler
 ADCC_handler:
-    ; No SREG save: sbr affects N/V/Z/S only, next ADCC fires approx. 10 ms after this one, multiplication_loop completes in <350 us
+    ; No SREG save: SBR preserves C, so it cannot break the ADD/ADC LUT-address sequence
+    ; All other SREG-dependent main-code sequences execute with interrupts disabled
     sbr status_register, 1<<RECOMPUTE_DELAY
 reti
 
@@ -319,32 +327,33 @@ process_long_press:
     clr tensms_counter
     cbi ADCSRA, ADEN                            ; Disabling ADC!
 
-    ; Calculate the dimming interval by dividing POWEROFF_DELAY_SECONDS by the current potentiometer value (only performed once, when a long press is detected)
-    ; The result is stored in a seconds_per_division pair, and this value is used to determine the time interval to subtract one from the current value of triac_delay
-    clr seconds_per_division0                   ; Reset the register of the number of seconds per division of the brightness reduction level during auto-dimming
-    clr seconds_per_division1                   ; -//-
-    
-    ldi tmpa, TRIAC_DELAY_DIMOUT_TOP + 1
-    sub tmpa, triac_delay                       ; Subtract from TRIAC_DELAY_DIMOUT_TOP + 1, the current value of triac_delay,
-                                                ; since we are interested in 200 effective number of dimming gradations used: 10..209 inclusive
-    mov tmpc, tmpa                              ; tmpc = number of auto-dimout steps remaining (TRIAC_DELAY_DIMOUT_TOP+1 - triac_delay, range 11..200)
-    ldi tmpa, LOW(POWEROFF_DELAY_SECONDS)
-    ldi tmpb, HIGH(POWEROFF_DELAY_SECONDS)
+    ; Calculate the interval length for the LUT levels remaining from the current pot position.
+    ; The quotient q is stored in seconds_per_division1:seconds_per_division0.
+    ; The remainder is distributed across the fade so that exactly
+    ; POWEROFF_DELAY_SECONDS elapse without one long first interval.
+    clr seconds_per_division0
+    clr seconds_per_division1
+
+    ldi tmpa, TRIAC_LUT_SIZE
+    sub tmpa, dimout_lut_idx                    ; Remaining timed levels, including the current one: 148-index
+    mov dimout_steps, tmpa                      ; Pot indices are 0..127, therefore range is 21..148
+    mov tmpc, tmpa                              ; Divisor for the subtraction-based division
+
+    ldi tmpa, low(POWEROFF_DELAY_SECONDS)
+    ldi tmpb, high(POWEROFF_DELAY_SECONDS)
 subtraction_loop:
-    adiw seconds_per_division1:seconds_per_division0, 1  ; Increment quotient candidate
-    sub tmpa, tmpc                              ; Subtract tmpc from low byte
-    sbci tmpb, 0                                ; Propagate borrow into high byte
-    brcc subtraction_loop                       ; Repeat while no borrow
-    sbiw seconds_per_division1:seconds_per_division0, 1  ; Undo last increment: q = floor(POWEROFF_DELAY_SECONDS / tmpc)
-    ; At loop exit tmpa = r - tmpc wrapped in 8 bits; add tmpc to recover r = POWEROFF_DELAY_SECONDS mod tmpc
-    ; First interval is q+r, all subsequent are q; total = (q+r) + (tmpc-1)*q = POWEROFF_DELAY_SECONDS
-    add tmpa, tmpc                              ; Recover r = POWEROFF_DELAY_SECONDS mod tmpc
-    mov poff_counter0, seconds_per_division0    ; Load q into the poff_counter pair
-    mov poff_counter1, seconds_per_division1
-    add poff_counter0, tmpa                     ; First interval = q + r
-    clr tmpa                                    ; CLR preserves carry
-    adc poff_counter1, tmpa                     ; Propagate carry into high byte
-    sei                                         ; Turn interrupts back on
+    adiw seconds_per_division1:seconds_per_division0, 1
+    sub tmpa, tmpc
+    sbci tmpb, 0
+    brcc subtraction_loop
+    sbiw seconds_per_division1:seconds_per_division0, 1  ; q = floor(POWEROFF_DELAY_SECONDS/dimout_steps)
+
+    add tmpa, tmpc                              ; Recover r = POWEROFF_DELAY_SECONDS mod dimout_steps
+    mov dimout_remainder, tmpa
+    clr dimout_error
+
+    rcall load_dimout_interval                  ; Load duration of the current LUT level
+    sei
     rjmp calc_triac_delay
 
 process_short_press:
@@ -359,49 +368,97 @@ short_press:
     cbr status_register, 1<<POWEROFF_BIT        ; Reset POWEROFF_BIT
 
 calc_triac_delay:
-    sbrs status_register, POWEROFF_BIT          ; If POWEROFF_BIT == 1, then recalculate the value of the delay for supplying a pulse to the TRIAC
-    rjmp read_pot_value                         ; If POWEROFF_BIT == 0, then go to the label
-    
-    ; Check if the pair poff_counter1:poff_counter0 has counted to zero
+    sbrs status_register, POWEROFF_BIT
+    rjmp read_pot_value
+
+    ; Check whether the current LUT-level interval has elapsed
     cli
     tst poff_counter0
     brne enable_interrupts
     tst poff_counter1
     brne enable_interrupts
-    ; If both registers poff_counter0 and poff_counter1 == 0, then decrease the value of triac_delay by one and load into poff_counter0<--seconds_per_division0 and into poff_counter1<--seconds_per_division1
-    mov poff_counter0, seconds_per_division0
-    mov poff_counter1, seconds_per_division1
 
-    inc triac_delay                                       ; We increase the value of the delay of the pulse supply to the triac by 1
-    cpi triac_delay, TRIAC_DELAY_DIMOUT_TOP + 1           ; Compare whether the potentiometer value has increased above TRIAC_DELAY_DIMOUT_TOP + 1 (because the TRIAC_DELAY_DIMOUT_TOP value is used inclusively and is valid)
-    brne enable_interrupts                                ; if triac_delay == TRIAC_DELAY_DIMOUT_TOP + 1, then reset lamp active and countdown flags
-    ; If yes, reset lamp active and countdown flags
-    ldi triac_delay, TRIAC_DELAY_TOP                      ; Write TRIAC_DELAY_TOP to triac_delay (not TRIAC_DELAY_DIMOUT_TOP, which means too low brightness). This value will still, in principle, be overwritten by the new value from the ADC the next time the lamp is turned on
-    cbr status_register, 1<<LAMP_STATUS_BIT | 1<<POWEROFF_BIT     ; Resettings bits LAMP_STATUS_BIT and POWEROFF_BIT
+    inc dimout_lut_idx                          ; Advance to the next perceptual dimout level
+    ldi tmpa, TRIAC_LUT_SIZE
+    cp dimout_lut_idx, tmpa
+    breq dimout_complete                        ; Index 148 is the end marker and is never read
+
+    ldi ZL, low(triac_lut * 2)
+    ldi ZH, high(triac_lut * 2)
+    add ZL, dimout_lut_idx
+    adc ZH, r0                                  ; r0 is permanently zero
+    lpm triac_delay, Z
+
+    rcall load_dimout_interval                  ; Load q or q+1 seconds for this LUT level
+    rjmp enable_interrupts
+dimout_complete:
+    ldi triac_delay, TRIAC_DELAY_TOP            ; Restore normal minimum, ADC overwrites it after lamp-on
+    cbr status_register, 1<<LAMP_STATUS_BIT | 1<<POWEROFF_BIT
 enable_interrupts:
     sei
 
 read_pot_value:
-    ; Calculating the delay value based on the new value from the potentiometer
+    ; Convert ADCH to a 7-bit LUT index and read the gamma-corrected TRIAC delay
     sbrs status_register, RECOMPUTE_DELAY
     rjmp MAIN
     cbr status_register, 1<<RECOMPUTE_DELAY
-    in tmpa, ADCH                                                 ; Reading the DAC value in tmpa
-    lsr tmpa                                                      ; Shift twice to the right by one position, thereby dividing the ADC value by 4
-    lsr tmpa                                                      ; And from the range of values ​​0..255 we get 0..63
-    clr tmpb                                                      ; Clear triac_delay before multiplying tmpa by 3, the result will be written to triac_delay
-    ; Multiply tmpa by 3 in the loop and write the result to triac_delay 
-multiplication_loop:
-    tst tmpa                                                      ; Check if tmpa is zero
-    breq exit_multiplication_loop                                 ; If tmpa == 0, then exit
-    subi tmpb, -3                                                 ; Otherwise, add 3 to triac_delay
-    dec tmpa                                                      ; Decrement tmpa by 1
-    rjmp multiplication_loop
-exit_multiplication_loop:
-    ; Add TRIAC_DELAY_BTM to the resulting value
-    ; Invariant: tmpb max = 63*3 + TRIAC_DELAY_BTM = 199 = TRIAC_DELAY_TOP, no 8-bit overflow
-    ; 63 = 255>>2 (lsr count), 3 = loop multiplier (subi tmpb, -3): enforced by compile-time checks at the top of this file
-    subi tmpb, -TRIAC_DELAY_BTM                                   ; To shift the raw value from the potentiometer by 10 units, adding 10 to it
-    mov triac_delay, tmpb
+    in tmpa, ADCH                               ; 0..255
+    lsr tmpa                                    ; 0..127
+    mov dimout_lut_idx, tmpa                    ; Starting LUT index for a possible auto-dimout
+
+    ldi ZL, low(triac_lut * 2)
+    ldi ZH, high(triac_lut * 2)
+    add ZL, tmpa
+    adc ZH, r0                                  ; r0 is permanently zero
+    lpm triac_delay, Z
 
 rjmp MAIN
+
+
+; Load the next interval duration.
+; Exactly dimout_remainder of dimout_steps intervals receive q+1 seconds;
+; the rest receive q seconds. The 8-bit accumulator may overflow, so C is checked.
+load_dimout_interval:
+    mov poff_counter0, seconds_per_division0
+    mov poff_counter1, seconds_per_division1
+
+    add dimout_error, dimout_remainder
+    brcs dimout_interval_extra
+    cp dimout_error, dimout_steps
+    brlo dimout_interval_ready
+dimout_interval_extra:
+    sub dimout_error, dimout_steps
+    inc poff_counter0                          ; r15:r14 is not a valid ADIW register pair
+    brne dimout_interval_ready
+    inc poff_counter1
+dimout_interval_ready:
+    ret
+
+
+; ========== Gamma-corrected LUT
+; Indices 0..127 preserve the gamma-corrected potentiometer mapping (delay 10..199).
+; Indices 128..147 are dimout-only: each low-end delay 200..209 is repeated twice
+; to spend more time in the low-brightness region while keeping LUT-only control.
+; For the actual interrupt sequence:
+; alpha=(triac_delay+1)*pi/250
+; P=((pi-alpha)+sin(2*alpha)/2)/pi
+triac_lut:
+    .db  10,  31,  39,  45,  50,  54,  58,  61
+    .db  64,  67,  69,  72,  74,  76,  79,  81
+    .db  83,  84,  86,  88,  90,  91,  93,  95
+    .db  96,  98,  99, 101, 102, 103, 105, 106
+    .db 107, 109, 110, 111, 113, 114, 115, 116
+    .db 117, 119, 120, 121, 122, 123, 124, 125
+    .db 126, 128, 129, 130, 131, 132, 133, 134
+    .db 135, 136, 137, 138, 139, 140, 141, 142
+    .db 143, 144, 145, 146, 147, 148, 149, 149
+    .db 150, 151, 152, 153, 154, 155, 156, 157
+    .db 158, 159, 160, 160, 161, 162, 163, 164
+    .db 165, 166, 167, 168, 168, 169, 170, 171
+    .db 172, 173, 174, 175, 175, 176, 177, 178
+    .db 179, 180, 181, 181, 182, 183, 184, 185
+    .db 186, 187, 188, 188, 189, 190, 191, 192
+    .db 193, 194, 195, 195, 196, 197, 198, 199
+    .db 200, 200, 201, 201, 202, 202, 203, 203
+    .db 204, 204, 205, 205, 206, 206, 207, 207
+    .db 208, 208, 209, 209
