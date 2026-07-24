@@ -3,15 +3,12 @@
 ; Start coreinit.inc
 ram_flush:
     ldi ZL, low(SRAM_START)     ; Start of RAM address into the index register
-    ldi ZH, high(SRAM_START)
+    clr ZH                      ; ZH is always 0x00 for ATtiny13A (RAMEND = 0x009F)
     clr r16                     ; Clear r16
 flush:
     st Z+, r16                  ; Store 0 into the memory cell
-    cpi ZH, high(RAMEND)        ; Reached the end of RAM?
+    cpi ZL, low(RAMEND + 1)     ; Reached one past the last byte?
     brne flush                  ; If not, continue the cycle
-
-    cpi ZL, Low(RAMEND)         ; Did the low byte reach the end?
-    brne flush
 
     clr ZL                      ; Clear the index register
     clr ZH
