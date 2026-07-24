@@ -159,7 +159,7 @@ handle_poweroff_delay:
     rjmp reset_timer0                       ; If POWEROFF_BIT == 0, then go to the label
 
     inc tensms_counter                      ; Increase the tens of microseconds counter
-    cpi tensms_counter, 99                  ; If we have counted to 99, then increase the value of the pair poff_counter1:poff_counter0 by one
+    cpi tensms_counter, 100                 ; If we have counted to 100, then increase the value of the pair poff_counter1:poff_counter0 by one
     brne reset_timer0                       ; otherwise -- continue  
 
     clr tensms_counter                      ; Reset tensms_counter
@@ -255,8 +255,8 @@ RESET:
     out GIMSK, tmpa
 
     ; ==========  Timer0
-    ldi tmpa, 48                            ; Load 48 into the Timer 0 comparison register, so the timer will operate at the frequency of 25 kHz and, accordingly, overflow 250 times per half-period of the sine wave
-    out OCR0A, tmpa                         ; Accordingly, the delay between timer ticks will be 40 us
+    ldi tmpa, 47                            ; Load 47 into the Timer 0 comparison register: f = 1200000/(47+1) = 25000 Hz exactly, overflow 250 times per half-period of the sine wave
+    out OCR0A, tmpa                         ; Accordingly, the delay between timer ticks will be 40 us exactly
 
     ldi tmpa, 1<<CS00                       ; Set the prescaler for Timer 0 to 1, so it will count at a frequency of 1.2 MHz.
     out TCCR0B, tmpa
