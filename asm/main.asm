@@ -72,6 +72,8 @@
 ; ========== Button interrupt handler
 INT0_handler:
     push tmpa
+    in tmpa, SREG                           ; Save SREG
+    push tmpa
 
     ; We detect not just a button press, but two types of pressing: long and short
     ; After detecting a falling edge, disable all interrupts on INT0 for a minimum of 1 and a maximum of 2 periods of the 100 Hz grid zero crossing handler (10-20 ms)
@@ -118,11 +120,15 @@ int0_continue:
     clr button_counter                      ; Clearing the button press time counter 
 
     pop tmpa
+    out SREG, tmpa                          ; Restore SREG
+    pop tmpa
 reti
 
 
 ; ========== Zero Crossing Interrupt Handler (100Hz)
 PCI0_handler:
+    push tmpa
+    in tmpa, SREG                           ; Save SREG
     push tmpa
     push tmpb
 
@@ -172,11 +178,15 @@ reset_timer0:
 pci0_continue:
     pop tmpb
     pop tmpa
+    out SREG, tmpa                          ; Restore SREG
+    pop tmpa
 reti
 
 
 ; ========== Timer 0 counter match interrupt handler with OCR0A register value
 OC0A_handler:
+    push tmpa
+    in tmpa, SREG                           ; Save SREG
     push tmpa
 
     ; If the TRIAC pin of PORTB is in the logic one state, then set it back to zero and disable the timer interrupts
@@ -199,11 +209,14 @@ stop_timer:
 continue_counting2:
     inc pulse_delay_counter                 ; Increase the value of the counter register by 1
     pop tmpa
+    out SREG, tmpa                          ; Restore SREG
+    pop tmpa
 reti
 
 
 ; ========== ADC Conversion End Interrupt Handler
 ADCC_handler:
+    ; No SREG save: sbr affects N/V/Z/S only, next ADCC fires approx. 10 ms after this one, multiplication_loop completes in <350 us
     sbr status_register, 1<<RECOMPUTE_DELAY     
 reti
 
