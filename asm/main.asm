@@ -263,7 +263,7 @@ RESET:
     ldi tmpa, 1<<MUX1 | 1<<ADLAR            ; Select ADC2 as the ADC input (pin #3), ADLAR: ADC Left Adjust Result
     out ADMUX, tmpa
 
-    ldi tmpa, 1<<ADEN | 1<<ADATE | 1<<ADIE  ; ADEN: ADC Enable, ADATE: ADC Auto Trigger Enable, ADIE: ADC Interrupt Enable
+    ldi tmpa, 1<<ADEN | 1<<ADATE | 1<<ADIE | 1<<ADPS1 | 1<<ADPS0  ; ADEN: ADC Enable, ADATE: ADC Auto Trigger Enable, ADIE: ADC Interrupt Enable, ADPS1|ADPS0: prescaler=8 --> 1200000/8=150 kHz (within 50-200 kHz spec)
     out ADCSRA, tmpa
 
     ldi tmpa, 1<<ADTS2 | 1<<ADTS1           ; ADC Auto Trigger Source: Pin Change Interrupt Request
