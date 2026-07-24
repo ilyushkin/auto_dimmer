@@ -34,8 +34,8 @@
 .def tensms_counter = r21           ; The zero crossing counter, as soon as it reaches 100 (since zero is crossed every 10 ms, i.e. with a frequency of 100 Hz), then a second has passed
 .def button_counter = r22           ; Button press time counter
 .def status_register = r23          ; Status register, bit 0 is responsible for the on/off state of the lamp
-.def seconds_per_division0 = r24    ; Number of seconds per dimmer step for auto-dimming
-.def seconds_per_division1 = r25    ; Number of seconds per dimmer step for auto-dimming
+.def seconds_per_division0 = r24    ; Number of seconds per dimmer step for auto-dimming, must stay on r24 (W-pair low)
+.def seconds_per_division1 = r25    ; Number of seconds per dimmer step for auto-dimming, must stay on r25 (W-pair high)
 
 ; ========== Port B pins
 .equ Z_CROSS = 0
@@ -235,8 +235,8 @@ RESET:
     ldi tmpa, 1<<BUTTON                     ; Turn on the pull-up for the BUTTON output
     out PORTB, tmpa
 
-    ; ========== INT0 и PCINT0
-    ldi tmpa, 1<<ISC01                      ; By default, it is triggered on the rising edge
+    ; ========== INT0 and PCINT0
+    ldi tmpa, 1<<ISC01                      ; By default, it is triggered on the falling edge (ISC01=1, ISC00=0)
     out MCUCR, tmpa
     
     ldi tmpa, 1<<PCINT0                     ; PCI0 interrupt on change of state of PCINT0 pin (#5 Z_CROSS)
@@ -272,7 +272,7 @@ RESET:
     ; ========== Watchdog
     ldi tmpa, 1<<WDCE | 1<<WDE              ; Step 1: enable timed change sequence (WDCE+WDE must be set together)
     out WDTCR, tmpa
-    ldi tmpa, 1<<WDE | 1<<WDP2 | 1<<WDP1    ; Step 2 (within 4 cycles): set WDE + prescaler=8 -> approx. 1 s timeout (WDP2:WDP1:WDP0 = 110)
+    ldi tmpa, 1<<WDE | 1<<WDP2 | 1<<WDP1    ; Step 2 (within 4 cycles): set WDE + prescaler=8 --> approx. 1 s timeout (WDP2:WDP1:WDP0 = 110)
     out WDTCR, tmpa
 
     ; ========== Initial pins states
@@ -359,7 +359,7 @@ calc_triac_delay:
 
     inc triac_delay                                       ; We increase the value of the delay of the pulse supply to the triac by 1
     cpi triac_delay, TRIAC_DELAY_DIMOUT_TOP + 1           ; Compare whether the potentiometer value has increased above TRIAC_DELAY_DIMOUT_TOP + 1 (because the TRIAC_DELAY_DIMOUT_TOP value is used inclusively and is valid)
-    brne enable_interrupts                                ; if triac_delay == TRIAC_DELAY_DIMOUT_TOP + 2, then reset lamp active and countdown flags
+    brne enable_interrupts                                ; if triac_delay == TRIAC_DELAY_DIMOUT_TOP + 1, then reset lamp active and countdown flags
     ; If yes, reset lamp active and countdown flags
     ldi triac_delay, TRIAC_DELAY_TOP                      ; Write TRIAC_DELAY_TOP to triac_delay (not TRIAC_DELAY_DIMOUT_TOP, which means too low brightness). This value will still, in principle, be overwritten by the new value from the ADC the next time the lamp is turned on
     cbr status_register, 1<<LAMP_STATUS_BIT | 1<<POWEROFF_BIT     ; Resettings bits LAMP_STATUS_BIT and POWEROFF_BIT
