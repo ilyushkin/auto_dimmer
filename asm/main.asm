@@ -7,7 +7,7 @@
 .dseg                               ; RAM segment
 
 .cseg                               ; Code segment (flash) 
-.equ POWEROFF_DELAY_SECONDS = 1200  ; Soft auto-dimming delay in seconds
+.equ POWEROFF_DELAY_SECONDS = 900   ; Soft auto-dimming delay in seconds; 300..1800 is a typical range
 
 .equ TRIAC_DELAY_BTM = 10           ; Minimum delay before sending a pulse to the TRIAC (maximum brightness)
 .equ TRIAC_DELAY_TOP = 199          ; Maximum delay before sending a pulse to the TRIAC (minimum brightness)
